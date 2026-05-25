@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 )
 
-// DadosEsteira define a estrutura do JSON que a API vai receber (idêntico ao payload do Python)
+// DadosEsteira define a estrutura do JSON
 type DadosEsteira struct {
 	IDEquipamento     string  `json:"id_equipamento"`
 	StatusOperacao    int     `json:"status_operacao"`
@@ -16,48 +17,64 @@ type DadosEsteira struct {
 	TemperaturaMotor  float64 `json:"temperatura_motor_c"`
 }
 
-// handlerReceberDados processa a requisição da API (Endpoint: /api/telemetria)
+// Variáveis globais para armazenar o último dado na memória do servidor com segurança (Thread-safe)
+var (
+	ultimoDado DadosEsteira
+	mu         sync.Mutex
+)
+
+// handlerReceberDados processa o POST do simulador Python
 func handlerReceberDados(w http.ResponseWriter, r *http.Request) {
-	// Garante que a API só aceite requisições do tipo POST (envio de dados)
 	if r.Method != http.MethodPost {
-		http.Error(w, "Método não permitido. Use POST.", http.StatusMethodNotAllowed)
+		http.Error(w, "Método não permitido.", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var dados DadosEsteira
-
-	// Decodifica o JSON recebido diretamente para a estrutura em Go
 	err := json.NewDecoder(r.Body).Decode(&dados)
 	if err != nil {
-		http.Error(w, "Erro ao processar o JSON: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Exibe os dados recebidos no terminal do servidor backend
-	fmt.Printf("\n[API] Dados recebidos do equipamento: %s\n", dados.IDEquipamento)
-	fmt.Printf("Status: %d | Caixas no Ciclo: %d | Total: %d | Temp: %.1f°C\n", 
-		dados.StatusOperacao, dados.CaixasProcessadas, dados.TotalAcumulado, dados.TemperaturaMotor)
+	// Salva na memória global travando o Mutex para evitar conflito de leitura/escrita
+	mu.Lock()
+	ultimoDado = dados
+	mu.Unlock()
 
-	// LÓGICA DE INTERVENÇÃO (Business Logic): Simulação de Alerta de manutenção
+	fmt.Printf("\n[API] Recebido de: %s | Temp: %.1f°C | Total: %d\n", 
+		dados.IDEquipamento, dados.TemperaturaMotor, dados.TotalAcumulado)
+
 	if dados.TemperaturaMotor > 75.0 {
-		fmt.Printf("⚠️ [ALERTA MANUTENÇÃO] Crítico: Temperatura do motor atingiu %.1f°C!\n", dados.TemperaturaMotor)
-		// No futuro, colocaremos o disparo automático para a API do Telegram aqui
+		fmt.Printf("⚠️ [ALERTA] Sobreaquecimento crítico no motor!\n")
 	}
 
-	// Responde para o simulador (Python) que os dados foram processados com sucesso
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Dados de telemetria processados com sucesso pelo Backend Go!"))
+	w.Write([]byte("Sucesso"))
+}
+
+// handlerEnviarParaDashboard envia o último dado via GET para o Streamlit
+func handlerEnviarParaDashboard(w http.ResponseWriter, r *http.Request) {
+	// Permite que qualquer página web acesse essa API (CORS)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+
+	mu.Lock()
+	json.NewEncoder(w).Encode(ultimoDado)
+	mu.Unlock()
 }
 
 func main() {
-	// Define a rota/endpoint da API HTTP
+	// Rota que recebe os dados do simulador (POST)
 	http.HandleFunc("/api/telemetria", handlerReceberDados)
+	
+	// Rota que entrega os dados para o Dashboard (GET)
+	http.HandleFunc("/api/dashboard", handlerEnviarParaDashboard)
 
-	fmt.Println("🚀 Servidor Backend em Go iniciado com sucesso!")
-	fmt.Println("Ouvindo na porta :8080 (Endpoint: http://localhost:8080/api/telemetria)...")
+	fmt.Println("🚀 Servidor Backend em Go atualizado!")
+	fmt.Println("API Dashboard: http://localhost:8080/api/dashboard")
 
-	// Inicia o servidor HTTP escutando na porta local 8080
 	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal("Erro ao iniciar o servidor: ", err)
+		log.Fatal(err)
 	}
 }
