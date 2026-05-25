@@ -24,8 +24,8 @@ while True:
         # Faz uma requisição GET para o backend em Go para buscar o último dado
         resposta = requests.get(url_api_go, timeout=2)
         
-        if respuesta.status_code == 200 and respuesta.text.strip() != "":
-            dados = respuesta.json()
+        if resposta.status_code == 200 and resposta.text.strip() != "":
+            dados = resposta.json()
             
             # Se o ID do equipamento estiver vazio, significa que o Go ainda não recebeu dados
             if not dados.get("id_equipamento"):
